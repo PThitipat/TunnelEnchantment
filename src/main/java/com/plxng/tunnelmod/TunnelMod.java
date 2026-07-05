@@ -8,6 +8,7 @@ import net.minecraft.enchantment.EnchantmentHelper;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
+import net.minecraft.particle.ParticleTypes;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
@@ -67,6 +68,16 @@ public class TunnelMod implements ModInitializer {
             PROCESSING.set(true);
             try {
                 if (level >= 3) {
+                    // effect พิเศษเฉพาะ level 3: particle ระเบิดเล็ก ๆ ตรงกลางบล็อกที่ขุด
+                    // ใช้ spawnParticles ของ ServerWorld ซึ่งจะ sync ไปหา client ทุกคนที่อยู่ใกล้ ๆ ให้เอง
+                    serverWorld.spawnParticles(
+                            ParticleTypes.ELECTRIC_SPARK,
+                            pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, // ตำแหน่งกึ่งกลางบล็อก
+                            40,          // จำนวน particle
+                            0.6, 0.6, 0.6, // การกระจายตัวรอบจุดศูนย์กลาง (x,y,z spread)
+                            0.02         // ความเร็ว/extra data ของ particle
+                    );
+
                     // เต็มหน้าตัด 3x3: dPerp = ซ้าย-ขวา, dVert = บน-ล่าง (แกน Y ตายตัว ไม่ขึ้นกับ facing)
                     for (int dVert = 1; dVert >= -1; dVert--) {
                         for (int dPerp = -1; dPerp <= 1; dPerp++) {
