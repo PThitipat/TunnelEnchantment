@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "tunnelmod",
+  "version": "${version}",
+  "name": "Tunnel Enchantment Mod",
+  "description": "Server-side custom Tunnel enchantment: mines a 3-wide, 1-tall tunnel per swing.",
+  "authors": ["Plxng"],
+  "contact": {},
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["com.plxng.tunnelmod.TunnelMod"]
+  },
+  "mixins": [],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
