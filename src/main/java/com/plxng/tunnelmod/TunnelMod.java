@@ -8,7 +8,7 @@ import net.minecraft.enchantment.EnchantmentHelper;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
-import net.minecraft.particle.ParticleTypes;
+import net.minecraft.particle.DustParticleEffect;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
@@ -16,14 +16,16 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Vec3d;
+import org.joml.Vector3f;
 
 import java.util.Optional;
 
 /**
  * Tunnel enchantment (server-side only).
  * Level 1: ขุดปกติ (1x1)
- * Level 2: 3x1 (ซ้าย-ขวา เพิ่มฝั่งละ 1 บล็อก)
- * Level 3: 3x3 (เต็มหน้าตัด รวมมุมด้วย 8 บล็อกเสริมรอบบล็อกที่ขุดจริง)
+ * Level 2: 3x1 (แนวขวางเดียว ตามหน้าที่ผู้เล่นหัน)
+ * Level 3: 3x3 (เต็มหน้าตัด ตามหน้าที่ผู้เล่นหัน + particle ring effect)
  *
  * หมายเหตุ: enchantment ตัวนี้ประกาศผ่าน datapack json
  * (data/tunnelmod/enchantment/tunnel.json) ตามระบบ data-driven enchantment
@@ -36,6 +38,12 @@ public class TunnelMod implements ModInitializer {
 
     public static final RegistryKey<Enchantment> TUNNEL_KEY =
             RegistryKey.of(RegistryKeys.ENCHANTMENT, Identifier.of(MOD_ID, "tunnel"));
+
+    // สีของ particle ring (ฟ้าอมม่วงแบบคริสตัล/lapis ให้ดูพรีเมียม) ปรับได้ตามชอบ
+    // NOTE: constructor ของ DustParticleEffect(Vector3f color, float scale) อาจต่างกันเล็กน้อย
+    // ตาม yarn mappings version ถ้า compile ไม่ผ่านตรงนี้ ให้เช็ค autocomplete ใน IDE
+    private static final DustParticleEffect TUNNEL_DUST =
+            new DustParticleEffect(new Vector3f(0.45f, 0.75f, 1.0f), 1.4f);
 
     // กัน infinite recursion: world.breakBlock() ที่เราเรียกเองจะ trigger
     // PlayerBlockBreakEvents.AFTER ซ้ำอีกรอบ ต้องกันไม่ให้มันไปขุดต่อเนื่องไม่รู้จบ
@@ -52,44 +60,46 @@ public class TunnelMod implements ModInitializer {
             int level = getTunnelLevel(serverWorld, tool);
             if (level <= 0) return;
 
-            // facing ของผู้เล่น (แนวนอนเท่านั้น) ใช้ตัดสินว่าอุโมงค์ควรขยายไปแกนไหน
-            Direction facing = player.getHorizontalFacing();
+            // ใช้ทิศทางที่ผู้เล่น "หันหน้า" แบบเต็ม 6 ทิศ (รวมก้ม-เงย) แทนที่จะดูแค่แนวนอน
+            // เพื่อให้ 3x3 หมุนตามจริงว่าผู้เล่นกำลังขุดไปทางไหน (หน้า, ก้มลง, เงยขึ้น)
+            Vec3d look = player.getRotationVec(1.0f);
+            Direction miningFacing = Direction.getFacing(look.x, look.y, look.z);
 
-            // ถ้าผู้เล่นหันไปทาง east/west (แกน X) ให้อุโมงค์ขยายไปแนว Z (north/south)
-            // ถ้าผู้เล่นหันไปทาง north/south (แกน Z) ให้อุโมงค์ขยายไปแนว X (east/west)
-            Direction perpendicular = (facing.getAxis() == Direction.Axis.X)
-                    ? Direction.NORTH
-                    : Direction.EAST;
+            // หา 2 แกนที่ตั้งฉากกับทิศที่ขุด เพื่อสร้างหน้าตัด 3x3 ในระนาบที่ถูกต้อง
+            Direction axisA;
+            Direction axisB;
+            if (miningFacing.getAxis() == Direction.Axis.Y) {
+                // ผู้เล่นกำลังขุดขึ้น/ลง -> หน้าตัดเป็นระนาบแนวนอน (X-Z)
+                axisA = Direction.EAST;
+                axisB = Direction.NORTH;
+            } else if (miningFacing.getAxis() == Direction.Axis.X) {
+                // ผู้เล่นหันไปทาง east/west -> หน้าตัดคือ Z (ซ้าย-ขวา) + Y (บน-ล่าง)
+                axisA = Direction.NORTH;
+                axisB = Direction.UP;
+            } else {
+                // ผู้เล่นหันไปทาง north/south -> หน้าตัดคือ X (ซ้าย-ขวา) + Y (บน-ล่าง)
+                axisA = Direction.EAST;
+                axisB = Direction.UP;
+            }
 
-            // Scale ตาม level:
-            //   level 1 -> ขุดปกติ (1x1, ไม่มีบล็อกเสริม)
-            //   level 2 -> 3x1 (ซ้าย-ขวา เพิ่มฝั่งละ 1)
-            //   level 3 -> 3x3 (เต็มหน้าตัด รวมมุมด้วย 8 บล็อกเสริม)
             PROCESSING.set(true);
             try {
                 if (level >= 3) {
-                    // effect พิเศษเฉพาะ level 3: particle ระเบิดเล็ก ๆ ตรงกลางบล็อกที่ขุด
-                    // ใช้ spawnParticles ของ ServerWorld ซึ่งจะ sync ไปหา client ทุกคนที่อยู่ใกล้ ๆ ให้เอง
-                    serverWorld.spawnParticles(
-                            ParticleTypes.ELECTRIC_SPARK,
-                            pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, // ตำแหน่งกึ่งกลางบล็อก
-                            40,          // จำนวน particle
-                            0.6, 0.6, 0.6, // การกระจายตัวรอบจุดศูนย์กลาง (x,y,z spread)
-                            0.02         // ความเร็ว/extra data ของ particle
-                    );
+                    // effect พิเศษเฉพาะ level 3: particle ring ที่หมุนตามหน้าตัดจริง (smooth, ไม่กระจายสุ่ม)
+                    spawnTunnelRingEffect(serverWorld, pos, axisA, axisB);
 
-                    // เต็มหน้าตัด 3x3: dPerp = ซ้าย-ขวา, dVert = บน-ล่าง (แกน Y ตายตัว ไม่ขึ้นกับ facing)
-                    for (int dVert = 1; dVert >= -1; dVert--) {
-                        for (int dPerp = -1; dPerp <= 1; dPerp++) {
-                            if (dPerp == 0 && dVert == 0) continue; // ข้ามบล็อกกลางที่แตกไปแล้ว
-                            BlockPos target = pos.offset(perpendicular, dPerp).up(dVert);
+                    // เต็มหน้าตัด 3x3 ตามแนวที่ผู้เล่นหันจริง ๆ
+                    for (int dB = 1; dB >= -1; dB--) {
+                        for (int dA = -1; dA <= 1; dA++) {
+                            if (dA == 0 && dB == 0) continue; // ข้ามบล็อกกลางที่แตกไปแล้ว
                             if (tool.isEmpty()) break; // เครื่องมือพังกลางทาง หยุดเลย
+                            BlockPos target = pos.offset(axisA, dA).offset(axisB, dB);
                             breakExtra(serverWorld, player, tool, target);
                         }
                     }
                 } else if (level == 2) {
-                    BlockPos left = pos.offset(perpendicular);
-                    BlockPos right = pos.offset(perpendicular.getOpposite());
+                    BlockPos left = pos.offset(axisA);
+                    BlockPos right = pos.offset(axisA.getOpposite());
                     breakExtra(serverWorld, player, tool, left);
                     if (!tool.isEmpty()) {
                         breakExtra(serverWorld, player, tool, right);
@@ -100,6 +110,43 @@ public class TunnelMod implements ModInitializer {
                 PROCESSING.set(false);
             }
         });
+    }
+
+    /**
+     * particle ring effect แบบ smooth: วางจุด particle เป็นวงกลมเรขาคณิตแม่นยำ
+     * (ไม่ใช้ random spread แบบเดิม) ตามระนาบของหน้าตัดที่กำลังขุด ดูเนียนและ
+     * หมุนตามทิศทางที่ผู้เล่นหันจริง ๆ
+     */
+    private void spawnTunnelRingEffect(ServerWorld world, BlockPos pos, Direction axisA, Direction axisB) {
+        double cx = pos.getX() + 0.5;
+        double cy = pos.getY() + 0.5;
+        double cz = pos.getZ() + 0.5;
+
+        double ax = axisA.getOffsetX();
+        double ay = axisA.getOffsetY();
+        double az = axisA.getOffsetZ();
+        double bx = axisB.getOffsetX();
+        double by = axisB.getOffsetY();
+        double bz = axisB.getOffsetZ();
+
+        int pointsPerRing = 16;
+        double[] radii = {0.4, 0.75, 1.1};
+
+        for (double radius : radii) {
+            for (int i = 0; i < pointsPerRing; i++) {
+                double angle = (2 * Math.PI * i) / pointsPerRing;
+                double offA = Math.cos(angle) * radius;
+                double offB = Math.sin(angle) * radius;
+
+                double px = cx + ax * offA + bx * offB;
+                double py = cy + ay * offA + by * offB;
+                double pz = cz + az * offA + bz * offB;
+
+                // count=1, delta=0, speed=0 -> particle โผล่ตรงจุดที่คำนวณเป๊ะ ๆ
+                // (ไม่กระจายสุ่มแบบ spread เดิม) ทำให้ได้วงแหวนที่เนียน คมชัด
+                world.spawnParticles(TUNNEL_DUST, px, py, pz, 1, 0.0, 0.0, 0.0, 0.0);
+            }
+        }
     }
 
     private int getTunnelLevel(ServerWorld world, ItemStack tool) {
