@@ -17,15 +17,13 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Generate Gradle wrapper (if missing)
-        run: |
-          if [ ! -f "./gradlew" ]; then
-            gradle wrapper --gradle-version 8.8
-          fi
-          chmod +x ./gradlew
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10'
 
       - name: Build
-        run: ./gradlew build --stacktrace
+        run: gradle build --stacktrace
 
       - name: Upload built jar
         uses: actions/upload-artifact@v4
