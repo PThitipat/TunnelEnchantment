@@ -20,8 +20,9 @@ import java.util.Optional;
 
 /**
  * Tunnel enchantment (server-side only).
- * Level I-III: เจาะบล็อกซ้าย-ขวาเพิ่มจากบล็อกที่ผู้เล่นแตกจริง
- * ผลลัพธ์ = 3 กว้าง x 1 สูง (แนวเดียวกับบล็อกที่ขุด ไม่ขยายขึ้น-ลง)
+ * Level 1: ขุดปกติ (1x1)
+ * Level 2: 3x1 (ซ้าย-ขวา เพิ่มฝั่งละ 1 บล็อก)
+ * Level 3: 3x3 (เต็มหน้าตัด รวมมุมด้วย 8 บล็อกเสริมรอบบล็อกที่ขุดจริง)
  *
  * หมายเหตุ: enchantment ตัวนี้ประกาศผ่าน datapack json
  * (data/tunnelmod/enchantment/tunnel.json) ตามระบบ data-driven enchantment
@@ -59,19 +60,31 @@ public class TunnelMod implements ModInitializer {
                     ? Direction.NORTH
                     : Direction.EAST;
 
-            // ระดับ 1-3 ตอนนี้ยังคงเป็น 3 กว้าง (ซ้าย 1 + กลาง 1(ของจริง) + ขวา 1) เสมอ
-            // ถ้าอยากให้ level มีผลต่อความกว้าง (เช่น lvl1 = 1 กว้าง, lvl3 = 3 กว้าง)
-            // ให้เปลี่ยน loop ด้านล่างเป็น for (int i = 1; i <= level; i++)
-            BlockPos left = pos.offset(perpendicular);
-            BlockPos right = pos.offset(perpendicular.getOpposite());
-
+            // Scale ตาม level:
+            //   level 1 -> ขุดปกติ (1x1, ไม่มีบล็อกเสริม)
+            //   level 2 -> 3x1 (ซ้าย-ขวา เพิ่มฝั่งละ 1)
+            //   level 3 -> 3x3 (เต็มหน้าตัด รวมมุมด้วย 8 บล็อกเสริม)
             PROCESSING.set(true);
             try {
-                breakExtra(serverWorld, player, tool, left);
-                // เช็คซ้ำว่าเครื่องมือยังไม่พัง/หมดสภาพก่อนขุดบล็อกที่ 2
-                if (!tool.isEmpty()) {
-                    breakExtra(serverWorld, player, tool, right);
+                if (level >= 3) {
+                    // เต็มหน้าตัด 3x3: dPerp = ซ้าย-ขวา, dVert = บน-ล่าง (แกน Y ตายตัว ไม่ขึ้นกับ facing)
+                    for (int dVert = 1; dVert >= -1; dVert--) {
+                        for (int dPerp = -1; dPerp <= 1; dPerp++) {
+                            if (dPerp == 0 && dVert == 0) continue; // ข้ามบล็อกกลางที่แตกไปแล้ว
+                            BlockPos target = pos.offset(perpendicular, dPerp).up(dVert);
+                            if (tool.isEmpty()) break; // เครื่องมือพังกลางทาง หยุดเลย
+                            breakExtra(serverWorld, player, tool, target);
+                        }
+                    }
+                } else if (level == 2) {
+                    BlockPos left = pos.offset(perpendicular);
+                    BlockPos right = pos.offset(perpendicular.getOpposite());
+                    breakExtra(serverWorld, player, tool, left);
+                    if (!tool.isEmpty()) {
+                        breakExtra(serverWorld, player, tool, right);
+                    }
                 }
+                // level 1: ไม่ทำอะไรเพิ่ม
             } finally {
                 PROCESSING.set(false);
             }
